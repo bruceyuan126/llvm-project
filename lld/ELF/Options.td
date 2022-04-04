@@ -619,6 +619,7 @@ def: F<"plugin-opt=debug-pass-manager">,
 def: F<"plugin-opt=disable-verify">, Alias<disable_verify>, HelpText<"Alias for --disable-verify">;
 def plugin_opt_dwo_dir_eq: J<"plugin-opt=dwo_dir=">,
   HelpText<"Directory to store .dwo files when LTO and debug fission are used">;
+
 def plugin_opt_emit_asm: F<"plugin-opt=emit-asm">,
   Alias<lto_emit_asm>, HelpText<"Alias for --lto-emit-asm">;
 def plugin_opt_emit_llvm: F<"plugin-opt=emit-llvm">;

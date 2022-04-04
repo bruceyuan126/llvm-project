@@ -2199,6 +2199,13 @@ Preprocessor::ImportAction Preprocessor::HandleHeaderIncludeOrImport(
     return {ImportAction::None};
   }
 
+//  llvm::errs() << "\n*** HandleHeaderIncludeOrImport: before\n" << isAngled << " "
+//               << Filename << " Filename.\n";
+#if defined(_WIN32)
+//  llvm::errs() << "\n*** HandleHeaderIncludeOrImport: _WIN32\n" << isAngled << " "
+//               << Filename << " Filename.\n";
+#endif
+
   // Issue a diagnostic if the name of the file on disk has a different case
   // than the one we're about to open.
   const bool CheckIncludePathPortability =

@@ -388,6 +388,9 @@ Optional<FileEntryRef> HeaderSearch::getFileAndSuggestModule(
     StringRef FileName, SourceLocation IncludeLoc, const DirectoryEntry *Dir,
     bool IsSystemHeaderDir, Module *RequestingModule,
     ModuleMap::KnownHeader *SuggestedModule) {
+
+    //llvm::errs() << "\n*** getFileAndSuggestModule:\n"
+    //             << FileName << " Filename.\n";
   // If we have a module map that might map this header, load it and
   // check whether we'll have a suggestion for a module.
   auto File = getFileMgr().getFileRef(FileName, /*OpenFile=*/true);
@@ -398,8 +401,11 @@ Optional<FileEntryRef> HeaderSearch::getFileAndSuggestModule(
     if (EC != llvm::errc::no_such_file_or_directory &&
         EC != llvm::errc::invalid_argument &&
         EC != llvm::errc::is_a_directory && EC != llvm::errc::not_a_directory) {
-      Diags.Report(IncludeLoc, diag::err_cannot_open_file)
-          << FileName << EC.message();
+      llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
+                 << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n";
+      //Diags.Report(IncludeLoc, diag::err_cannot_open_file)
+      //    << FileName << EC.message();
+
     }
     return None;
   }
@@ -409,7 +415,8 @@ Optional<FileEntryRef> HeaderSearch::getFileAndSuggestModule(
           &File->getFileEntry(), Dir ? Dir : File->getFileEntry().getDir(),
           RequestingModule, SuggestedModule, IsSystemHeaderDir))
     return None;
-
+  //llvm::errs() << "\n*** getFileAndSuggestModule success: \n"
+  //               << FileName << " \n";
   return *File;
 }
 
@@ -843,6 +850,9 @@ Optional<FileEntryRef> HeaderSearch::LookupFile(
   if (SuggestedModule)
     *SuggestedModule = ModuleMap::KnownHeader();
 
+//  llvm::errs() << "\n*** LookupFile:\n" << isAngled << " "
+//               << Filename << " Filename.\n";
+
   // If 'Filename' is absolute, check to see if it exists and no searching.
   if (llvm::sys::path::is_absolute(Filename)) {
     CurDir = nullptr;
@@ -952,6 +962,9 @@ Optional<FileEntryRef> HeaderSearch::LookupFile(
     }
   }
 
+//  llvm::errs() << "\n*** LookupFile:*******************\n" << isAngled << " "
+//               << Filename << " Filename.\n";
+
   CurDir = nullptr;
 
   // If this is a system #include, ignore the user #include locs.
@@ -1014,7 +1027,8 @@ Optional<FileEntryRef> HeaderSearch::LookupFile(
       *IsFrameworkFound |= (IsFrameworkFoundInDir && !CacheLookup.MappedName);
     if (!File)
       continue;
-
+//    llvm::errs() << "\n*** LookupFile:**********1111111111111111111 found*********\n" << isAngled << " "
+//               << Filename << " Filename.\n";
     CurDir = &SearchDirs[i];
 
     // This file is a system header or C++ unfriendly if the dir is.
@@ -1105,7 +1119,8 @@ Optional<FileEntryRef> HeaderSearch::LookupFile(
       *SuggestedModule = MSSuggestedModule;
     return MSFE;
   }
-
+  llvm::errs() << "\n*** LookupFile:---------------\n" << isAngled << " "
+               << Filename << " Filename.----------not found----------\n";
   // Otherwise, didn't find it. Remember we didn't find this.
   CacheLookup.HitIdx = SearchDirs.size();
   return None;

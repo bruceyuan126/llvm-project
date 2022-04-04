@@ -1,5 +1,7 @@
 include "llvm/Option/OptParser.td"
 
+class FF<string name> : Flag<["--"], name>;
+
 class F<string name>: Flag<["--", "-"], name>;
 class J<string name>: Joined<["--", "-"], name>;
 class S<string name>: Separate<["--", "-"], name>;
@@ -161,3 +163,10 @@ defm: EqNoHelp<"plugin">;
 defm: EqNoHelp<"plugin-opt">;
 defm: EqNoHelp<"sysroot">;
 def: F<"start-group">;
+
+
+// yzh
+def lto_emit_asm: FF<"lto-emit-asm">,
+  HelpText<"Emit assembly code">;
+def plugin_opt_emit_asm: F<"plugin-opt=emit-asm">,
+  Alias<lto_emit_asm>, HelpText<"Alias for --lto-emit-asm">;

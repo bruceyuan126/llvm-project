@@ -174,6 +174,9 @@ struct Configuration {
   bool ltoNewPassManager = false;
   // Used for /opt:[no]ltodebugpassmanager
   bool ltoDebugPassManager = false;
+  bool ltoEmitAsm = false;
+  bool emitLLVM = false;
+  std::vector<llvm::StringRef> thinLTOModulesToCompile;
 
   // Used for /merge:from=to (e.g. /merge:.rdata=.text)
   std::map<StringRef, StringRef> merge;

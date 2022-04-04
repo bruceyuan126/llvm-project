@@ -364,6 +364,7 @@ std::vector<InputFile *> BitcodeCompiler::compile() {
       saveBuffer(buf[i], config->outputFile + Twine(i) + ".lto.o");
   }
 
+
   if (config->ltoEmitAsm) {
     saveBuffer(buf[0], config->outputFile);
     for (unsigned i = 1; i != maxTasks; ++i)

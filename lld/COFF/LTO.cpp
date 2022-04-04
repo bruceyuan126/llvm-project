@@ -89,6 +89,10 @@ static lto::Config createConfig() {
   c.RunCSIRInstr = config->ltoCSProfileGenerate;
   c.PGOWarnMismatch = config->ltoPGOWarnMismatch;
 
+  if (config->ltoEmitAsm)
+    c.CGFileType = CGFT_AssemblyFile;
+  warn("c.CGFileType: ");
+
   if (config->saveTemps)
     checkError(c.addSaveTemps(std::string(config->outputFile) + ".",
                               /*UseInputModulePath*/ true));
@@ -226,6 +230,12 @@ std::vector<InputFile *> BitcodeCompiler::compile(COFFLinkerContext &ctx) {
     if (config->saveTemps)
       saveBuffer(buf[i], ltoObjName);
     ret.push_back(make<ObjFile>(ctx, MemoryBufferRef(objBuf, ltoObjName)));
+  }
+  if (config->ltoEmitAsm) {
+    saveBuffer(buf[0], config->outputFile);
+    for (unsigned i = 1; i != maxTasks; ++i)
+    saveBuffer(buf[i], config->outputFile + Twine(i));
+    return {};
   }
 
   return ret;

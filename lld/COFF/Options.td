@@ -2,6 +2,8 @@ include "llvm/Option/OptParser.td"
 
 // link.exe accepts options starting with either a dash or a slash.
 
+class FF<string name> : Flag<["--"], name>;
+
 // Flag that takes no arguments.
 class F<string name> : Flag<["/", "-", "/?", "-?"], name>;
 
@@ -249,6 +251,12 @@ defm lto_pgo_warn_mismatch: B<
      "lto-pgo-warn-mismatch",
      "turn on warnings about profile cfg mismatch (default)>",
      "turn off warnings about profile cfg mismatch">;
+// yzh
+def lto_emit_asm: FF<"lto-emit-asm">,
+  HelpText<"Emit assembly code">;
+def plugin_opt_emit_asm: F<"plugin-opt=emit-asm">,
+  Alias<lto_emit_asm>, HelpText<"Alias for --lto-emit-asm">;
+
 def dash_dash_version : Flag<["--"], "version">,
   HelpText<"Display the version number and exit">;
 def threads

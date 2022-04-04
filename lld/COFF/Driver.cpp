@@ -1267,6 +1267,11 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   cl::ResetAllOptionOccurrences();
   cl::ParseCommandLineOptions(v.size(), v.data());
 
+  for (auto *argt : args) {
+    //std::string str = argt->getValue();
+    //warn("input to coff::link: " + str);
+  }
+
   // Handle /errorlimit early, because error() depends on it.
   if (auto *arg = args.getLastArg(OPT_errorlimit)) {
     int n = 20;
@@ -1619,6 +1624,8 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
       (tailMerge == 1 && config->doICF != ICFLevel::None) || tailMerge == 2;
   config->ltoNewPassManager = ltoNewPM;
   config->ltoDebugPassManager = ltoDebugPM;
+  config->ltoEmitAsm = args.hasArg(OPT_lto_emit_asm);
+  warn("ltoEmitAsm: \n");
 
   // Handle /lldsavetemps
   if (args.hasArg(OPT_lldsavetemps))
@@ -2127,6 +2134,19 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   // files" and not object files. Index file creation is already done
   // in compileBitcodeFiles, so we are done if that's the case.
   if (config->thinLTOIndexOnly)
+    return;
+  // Skip the normal linked output if some LTO options are specified.
+  //
+  // For --thinlto-index-only, index file creation is performed in
+  // compileBitcodeFiles, so we are done afterwards. --plugin-opt=emit-llvm and
+  // --plugin-opt=emit-asm create output files in bitcode or assembly code,
+  // respectively. When only certain thinLTO modules are specified for
+  // compilation, the intermediate object file are the expected output.
+  const bool skipLinkedOutput = config->thinLTOIndexOnly || config->emitLLVM ||
+                                config->ltoEmitAsm ||
+                                !config->thinLTOModulesToCompile.empty();
+  // Bail out if normal linked output is skipped due to LTO.
+  if (skipLinkedOutput)
     return;
 
   // If we generated native object files from bitcode files, this resolves
