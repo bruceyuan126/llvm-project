@@ -50,6 +50,50 @@ private:
   void AddLibGCC(const llvm::opt::ArgList &Args,
                  llvm::opt::ArgStringList &CmdArgs) const;
 };
+
+// Runs lto-lld-asm/asm/lld
+class LLVM_LIBRARY_VISIBILITY LtoAsmLinker : public Tool {
+public:
+  LtoAsmLinker(const ToolChain &TC)
+      : Tool("MinGW::LtoAsmLinker", "ltoasm-linker", TC) {}
+
+  bool hasIntegratedCPP() const override { return false; }
+  bool isLinkJob() const override { return true; }
+
+  void ConstructJob(Compilation &C, const JobAction &JA,
+                    const InputInfo &Output, const InputInfoList &Inputs,
+                    const llvm::opt::ArgList &TCArgs,
+                    const char *LinkingOutput) const override;
+
+private:
+  void AddLibGCC(const llvm::opt::ArgList &Args,
+                 llvm::opt::ArgStringList &CmdArgs) const;
+  void ConstructJobComm(Compilation &C, const JobAction &JA,
+                    const InputInfo &Output, const InputInfoList &Inputs,
+                    const llvm::opt::ArgList &TCArgs,
+                    llvm::opt::ArgStringList &CmdArgs,
+                    const char *InputFileName = nullptr) const;
+
+  /// \return llvm-link output file name.
+  const char *constructLLVMLinkCommand(Compilation &C,
+      const JobAction &JA, const InputInfoList &Inputs,
+      const llvm::opt::ArgList &Args, llvm::StringRef SubArchName,
+      llvm::StringRef OutputFilePrefix) const;
+
+  /// \return llc output file name.
+  const char *constructLlcCommand(Compilation &C, const JobAction &JA,
+                                  const InputInfoList &Inputs,
+                                  const llvm::opt::ArgList &Args,
+                                  llvm::StringRef SubArchName,
+                                  llvm::StringRef OutputFilePrefix,
+                                  const char *InputFileName,
+                                  bool OutputIsAsm = false) const;
+
+  void constructLldCommand(Compilation &C, const JobAction &JA,
+                           const InputInfoList &Inputs, const InputInfo &Output,
+                           const llvm::opt::ArgList &Args,
+                           const char *InputFileName) const;
+};
 } // end namespace MinGW
 } // end namespace tools
 

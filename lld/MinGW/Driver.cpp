@@ -204,6 +204,9 @@ bool mingw::link(ArrayRef<const char *> argsArr, llvm::raw_ostream &stdoutOS,
   if (args.hasArg(OPT_lto_emit_asm))
     add("--lto-emit-asm");
 
+  if (args.hasArg(OPT_thinlto_index_only))
+    add("-thinlto-index-only");
+
   if (auto *a = args.getLastArg(OPT_entry)) {
     StringRef s = a->getValue();
     if (args.getLastArgValue(OPT_m) == "i386pe" && s.startswith("_"))

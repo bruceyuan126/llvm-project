@@ -26,6 +26,48 @@ using namespace clang::driver;
 using namespace clang;
 using namespace llvm::opt;
 
+static const char *getOutputFileName(Compilation &C, StringRef Base,
+                                     const char *Postfix,
+                                     const char *Extension) {
+  const char *OutputFileName;
+  if (C.getDriver().isSaveTempsEnabled()) {
+    OutputFileName =
+        C.getArgs().MakeArgString(Base.str() + Postfix + "." + Extension);
+  } else {
+    std::string TmpName =
+        C.getDriver().GetTemporaryPath(Base.str() + Postfix, Extension);
+    OutputFileName = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+  }
+  return OutputFileName;
+}
+
+static void addLLCOptArg(const llvm::opt::ArgList &Args,
+                         llvm::opt::ArgStringList &CmdArgs) {
+  if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+    StringRef OOpt = "0";
+    if (A->getOption().matches(options::OPT_O4) ||
+        A->getOption().matches(options::OPT_Ofast))
+      OOpt = "3";
+    else if (A->getOption().matches(options::OPT_O0))
+      OOpt = "0";
+    else if (A->getOption().matches(options::OPT_O)) {
+      // Clang and opt support -Os/-Oz; llc only supports -O0, -O1, -O2 and -O3
+      // so we map -Os/-Oz to -O2.
+      // Only clang supports -Og, and maps it to -O1.
+      // We map anything else to -O2.
+      OOpt = llvm::StringSwitch<const char *>(A->getValue())
+                 .Case("1", "1")
+                 .Case("2", "2")
+                 .Case("3", "3")
+                 .Case("s", "2")
+                 .Case("z", "2")
+                 .Case("g", "1")
+                 .Default("0");
+    }
+    CmdArgs.push_back(Args.MakeArgString("-O" + OOpt));
+  }
+}
+
 /// MinGW Tools
 void tools::MinGW::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                            const InputInfo &Output,
@@ -332,6 +374,405 @@ void tools::MinGW::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                          Exec, CmdArgs, Inputs, Output));
 }
 
+void tools::MinGW::LtoAsmLinker::AddLibGCC(const ArgList &Args,
+                                     ArgStringList &CmdArgs) const {
+  if (Args.hasArg(options::OPT_mthreads))
+    CmdArgs.push_back("-lmingwthrd");
+  CmdArgs.push_back("-lmingw32");
+
+  // Make use of compiler-rt if --rtlib option is used
+  ToolChain::RuntimeLibType RLT = getToolChain().GetRuntimeLibType(Args);
+  if (RLT == ToolChain::RLT_Libgcc) {
+    bool Static = Args.hasArg(options::OPT_static_libgcc) ||
+                  Args.hasArg(options::OPT_static);
+    bool Shared = Args.hasArg(options::OPT_shared);
+    bool CXX = getToolChain().getDriver().CCCIsCXX();
+
+    if (Static || (!CXX && !Shared)) {
+      CmdArgs.push_back("-lgcc");
+      CmdArgs.push_back("-lgcc_eh");
+    } else {
+      CmdArgs.push_back("-lgcc_s");
+      CmdArgs.push_back("-lgcc");
+    }
+  } else {
+    AddRunTimeLibs(getToolChain(), getToolChain().getDriver(), CmdArgs, Args);
+  }
+
+  CmdArgs.push_back("-lmoldname");
+  CmdArgs.push_back("-lmingwex");
+  for (auto Lib : Args.getAllArgValues(options::OPT_l))
+    if (StringRef(Lib).startswith("msvcr") ||
+        StringRef(Lib).startswith("ucrt") ||
+        StringRef(Lib).startswith("crtdll"))
+      return;
+  CmdArgs.push_back("-lmsvcrt");
+}
+
+void tools::MinGW::LtoAsmLinker::ConstructJobComm(Compilation &C, const JobAction &JA,
+                                        const InputInfo &Output,
+                                        const InputInfoList &Inputs,
+                                        const ArgList &Args,
+                                        ArgStringList &CmdArgs,
+                                        const char *InputFileName) const {
+  const ToolChain &TC = getToolChain();
+  const Driver &D = TC.getDriver();
+  const SanitizerArgs &Sanitize = TC.getSanitizerArgs(Args);
+
+  //ArgStringList CmdArgs;
+
+  // Silence warning for "clang -g foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  // and "clang -emit-llvm foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  // and for "clang -w foo.o -o foo". Other warning options are already
+  // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_w);
+
+  if (!D.SysRoot.empty())
+    CmdArgs.push_back(Args.MakeArgString("--sysroot=" + D.SysRoot));
+
+  if (Args.hasArg(options::OPT_s))
+    CmdArgs.push_back("-s");
+
+  CmdArgs.push_back("-m");
+  switch (TC.getArch()) {
+  case llvm::Triple::x86:
+    CmdArgs.push_back("i386pe");
+    break;
+  case llvm::Triple::x86_64:
+    CmdArgs.push_back("i386pep");
+    break;
+  case llvm::Triple::arm:
+  case llvm::Triple::thumb:
+    // FIXME: this is incorrect for WinCE
+    CmdArgs.push_back("thumb2pe");
+    break;
+  case llvm::Triple::aarch64:
+    CmdArgs.push_back("arm64pe");
+    break;
+  default:
+    llvm_unreachable("Unsupported target architecture.");
+  }
+
+  Arg *SubsysArg =
+      Args.getLastArg(options::OPT_mwindows, options::OPT_mconsole);
+  if (SubsysArg && SubsysArg->getOption().matches(options::OPT_mwindows)) {
+    CmdArgs.push_back("--subsystem");
+    CmdArgs.push_back("windows");
+  } else if (SubsysArg &&
+             SubsysArg->getOption().matches(options::OPT_mconsole)) {
+    CmdArgs.push_back("--subsystem");
+    CmdArgs.push_back("console");
+  }
+
+  if (Args.hasArg(options::OPT_mdll))
+    CmdArgs.push_back("--dll");
+  else if (Args.hasArg(options::OPT_shared))
+    CmdArgs.push_back("--shared");
+  if (Args.hasArg(options::OPT_static))
+    CmdArgs.push_back("-Bstatic");
+  else
+    CmdArgs.push_back("-Bdynamic");
+  if (Args.hasArg(options::OPT_mdll) || Args.hasArg(options::OPT_shared)) {
+    CmdArgs.push_back("-e");
+    if (TC.getArch() == llvm::Triple::x86)
+      CmdArgs.push_back("_DllMainCRTStartup@12");
+    else
+      CmdArgs.push_back("DllMainCRTStartup");
+    CmdArgs.push_back("--enable-auto-image-base");
+  }
+
+  if (Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
+    CmdArgs.push_back("--no-demangle");
+//llvm_unreachable("*******yzh**********");
+  CmdArgs.push_back("-o");
+  const char *OutputFile = Output.getFilename();
+  // GCC implicitly adds an .exe extension if it is given an output file name
+  // that lacks an extension.
+  // GCC used to do this only when the compiler itself runs on windows, but
+  // since GCC 8 it does the same when cross compiling as well.
+  if (!llvm::sys::path::has_extension(OutputFile)) {
+    CmdArgs.push_back(Args.MakeArgString(Twine(OutputFile) + ".exe"));
+    OutputFile = CmdArgs.back();
+  } else
+    CmdArgs.push_back(OutputFile);
+
+  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  // FIXME: add -N, -n flags
+  Args.AddLastArg(CmdArgs, options::OPT_r);
+  Args.AddLastArg(CmdArgs, options::OPT_s);
+  Args.AddLastArg(CmdArgs, options::OPT_t);
+  Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
+  Args.AddLastArg(CmdArgs, options::OPT_Z_Flag);
+
+  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
+    if (Args.hasArg(options::OPT_shared) || Args.hasArg(options::OPT_mdll)) {
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("dllcrt2.o")));
+    } else {
+      if (Args.hasArg(options::OPT_municode))
+        CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt2u.o")));
+      else
+        CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt2.o")));
+    }
+    if (Args.hasArg(options::OPT_pg))
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("gcrt2.o")));
+    CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbegin.o")));
+  }
+
+  Args.AddAllArgs(CmdArgs, options::OPT_L);
+  TC.AddFilePathLibArgs(Args, CmdArgs);
+
+  // Add the compiler-rt library directories if they exist to help
+  // the linker find the various sanitizer, builtin, and profiling runtimes.
+  for (const auto &LibPath : TC.getLibraryPaths()) {
+    if (TC.getVFS().exists(LibPath))
+      CmdArgs.push_back(Args.MakeArgString("-L" + LibPath));
+  }
+  auto CRTPath = TC.getCompilerRTPath();
+  if (TC.getVFS().exists(CRTPath))
+    CmdArgs.push_back(Args.MakeArgString("-L" + CRTPath));
+
+  if (!InputFileName)
+    AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
+  else
+    CmdArgs.push_back(InputFileName);
+
+  // TODO: Add profile stuff here
+
+  if (TC.ShouldLinkCXXStdlib(Args)) {
+    bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
+                               !Args.hasArg(options::OPT_static);
+    if (OnlyLibstdcxxStatic)
+      CmdArgs.push_back("-Bstatic");
+    TC.AddCXXStdlibLibArgs(Args, CmdArgs);
+    if (OnlyLibstdcxxStatic)
+      CmdArgs.push_back("-Bdynamic");
+  }
+
+  bool HasWindowsApp = false;
+  for (auto Lib : Args.getAllArgValues(options::OPT_l)) {
+    if (Lib == "windowsapp") {
+      HasWindowsApp = true;
+      break;
+    }
+  }
+
+  if (!Args.hasArg(options::OPT_nostdlib)) {
+    if (!Args.hasArg(options::OPT_nodefaultlibs)) {
+      if (Args.hasArg(options::OPT_static))
+        CmdArgs.push_back("--start-group");
+
+      if (Args.hasArg(options::OPT_fstack_protector) ||
+          Args.hasArg(options::OPT_fstack_protector_strong) ||
+          Args.hasArg(options::OPT_fstack_protector_all)) {
+        CmdArgs.push_back("-lssp_nonshared");
+        CmdArgs.push_back("-lssp");
+      }
+
+      if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                       options::OPT_fno_openmp, false)) {
+        switch (TC.getDriver().getOpenMPRuntime(Args)) {
+        case Driver::OMPRT_OMP:
+          CmdArgs.push_back("-lomp");
+          break;
+        case Driver::OMPRT_IOMP5:
+          CmdArgs.push_back("-liomp5md");
+          break;
+        case Driver::OMPRT_GOMP:
+          CmdArgs.push_back("-lgomp");
+          break;
+        case Driver::OMPRT_Unknown:
+          // Already diagnosed.
+          break;
+        }
+      }
+
+      AddLibGCC(Args, CmdArgs);
+
+      if (Args.hasArg(options::OPT_pg))
+        CmdArgs.push_back("-lgmon");
+
+      if (Args.hasArg(options::OPT_pthread))
+        CmdArgs.push_back("-lpthread");
+
+      if (Sanitize.needsAsanRt()) {
+        // MinGW always links against a shared MSVCRT.
+        CmdArgs.push_back(TC.getCompilerRTArgString(Args, "asan_dynamic",
+                                                    ToolChain::FT_Shared));
+        CmdArgs.push_back(
+            TC.getCompilerRTArgString(Args, "asan_dynamic_runtime_thunk"));
+        CmdArgs.push_back("--require-defined");
+        CmdArgs.push_back(TC.getArch() == llvm::Triple::x86
+                              ? "___asan_seh_interceptor"
+                              : "__asan_seh_interceptor");
+        // Make sure the linker consider all object files from the dynamic
+        // runtime thunk.
+        CmdArgs.push_back("--whole-archive");
+        CmdArgs.push_back(
+            TC.getCompilerRTArgString(Args, "asan_dynamic_runtime_thunk"));
+        CmdArgs.push_back("--no-whole-archive");
+      }
+
+      TC.addProfileRTLibs(Args, CmdArgs);
+
+      if (!HasWindowsApp) {
+        // Add system libraries. If linking to libwindowsapp.a, that import
+        // library replaces all these and we shouldn't accidentally try to
+        // link to the normal desktop mode dlls.
+        if (Args.hasArg(options::OPT_mwindows)) {
+          CmdArgs.push_back("-lgdi32");
+          CmdArgs.push_back("-lcomdlg32");
+        }
+        CmdArgs.push_back("-ladvapi32");
+        CmdArgs.push_back("-lshell32");
+        CmdArgs.push_back("-luser32");
+        CmdArgs.push_back("-lkernel32");
+      }
+
+      if (Args.hasArg(options::OPT_static)) {
+        CmdArgs.push_back("--end-group");
+      } else {
+        AddLibGCC(Args, CmdArgs);
+        if (!HasWindowsApp)
+          CmdArgs.push_back("-lkernel32");
+      }
+    }
+
+    if (!Args.hasArg(options::OPT_nostartfiles)) {
+      // Add crtfastmath.o if available and fast math is enabled.
+      TC.addFastMathRuntimeIfAvailable(Args, CmdArgs);
+
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtend.o")));
+    }
+  }
+  const char *Exec = Args.MakeArgString(TC.GetLinkerPath());
+  C.addCommand(std::make_unique<Command>(JA, *this,
+                                         ResponseFileSupport::AtFileUTF8(),
+                                         Exec, CmdArgs, Inputs, Output));
+}
+
+const char *tools::MinGW::LtoAsmLinker::constructLLVMLinkCommand(
+    Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
+    const ArgList &Args,
+    StringRef SubArchName, StringRef OutputFilePrefix) const {
+  ArgStringList CmdArgs;
+  InputInfo Output;
+  //const ToolChain &TC = getToolChain();
+
+  CmdArgs.push_back("--lto-emit-asm");
+  //for (const auto &II : Inputs)
+  //  if (II.isFilename())
+  //    CmdArgs.push_back(II.getFilename());
+
+  // Add an intermediate output file.
+  //CmdArgs.push_back("-o");
+  const char *OutputFileName =
+      getOutputFileName(C, OutputFilePrefix, "-linked", "asm");
+  //CmdArgs.push_back(OutputFileName);
+  Output = InputInfo(&JA, Args.MakeArgString(OutputFileName), OutputFileName);
+  //const char *Exec =
+  //    Args.MakeArgString(getToolChain().GetProgramPath("llvm-link"));
+  /*const char *Exec = Args.MakeArgString(TC.GetLinkerPath());
+  C.addCommand(std::make_unique<Command>(
+      JA, *this, ResponseFileSupport::AtFileCurCP(), Exec, CmdArgs, Inputs,
+      Output));*/
+  ConstructJobComm(C, JA,
+                   Output,
+                   Inputs,
+                   Args,
+                   CmdArgs);
+
+  return OutputFileName;
+}
+
+const char *tools::MinGW::LtoAsmLinker::constructLlcCommand(
+    Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
+    const llvm::opt::ArgList &Args, llvm::StringRef SubArchName,
+    llvm::StringRef OutputFilePrefix, const char *InputFileName,
+    bool OutputIsAsm) const {
+  // Construct llc command.
+  ArgStringList LlcArgs;
+  // The input to llc is the output from opt.
+  LlcArgs.push_back(InputFileName);
+  // Pass optimization arg to llc.
+  /*addLLCOptArg(Args, LlcArgs);
+  LlcArgs.push_back("-mtriple=amdgcn-amd-amdhsa");
+  LlcArgs.push_back(Args.MakeArgString("-mcpu=" + SubArchName));
+  LlcArgs.push_back(
+      Args.MakeArgString(Twine("-filetype=") + (OutputIsAsm ? "asm" : "obj")));*/
+
+  for (const Arg *A : Args.filtered(options::OPT_mllvm)) {
+    LlcArgs.push_back(A->getValue(0));
+  }
+
+  // Add output filename
+  LlcArgs.push_back("-c");
+  LlcArgs.push_back("-o");
+  const char *LlcOutputFile =
+      getOutputFileName(C, OutputFilePrefix, "", OutputIsAsm ? "s" : "o");
+  LlcArgs.push_back(LlcOutputFile);
+  const char *Llc = Args.MakeArgString(getToolChain().GetProgramPath("clang"));
+  C.addCommand(std::make_unique<Command>(
+      JA, *this, ResponseFileSupport::AtFileCurCP(), Llc, LlcArgs, Inputs,
+      InputInfo(&JA, Args.MakeArgString(LlcOutputFile))));
+  return LlcOutputFile;
+}
+
+void tools::MinGW::LtoAsmLinker::constructLldCommand(
+    Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
+    const InputInfo &Output, const llvm::opt::ArgList &Args,
+    const char *InputFileName) const {
+  // Construct lld command.
+  ArgStringList CmdArgs;
+  // The output from ld.lld is an HSA code object file.
+  /*ArgStringList LldArgs{"-flavor",    "gnu", "--no-undefined",
+                        "-shared",    "-o",  Output.getFilename(),
+                        InputFileName};
+
+  const char *Lld = Args.MakeArgString(getToolChain().GetLinkerPath());
+  C.addCommand(std::make_unique<Command>(
+      JA, *this, ResponseFileSupport::AtFileCurCP(), Lld, LldArgs, Inputs,
+      InputInfo(&JA, Args.MakeArgString(Output.getFilename()))));*/
+  ConstructJobComm(C, JA,
+                  Output,
+                  Inputs,
+                  Args,
+                  CmdArgs,
+                  InputFileName);
+}
+
+// For amdgcn the inputs of the linker job are device bitcode and output is
+// object file. It calls llvm-link, opt, llc, then lld steps.
+void tools::MinGW::LtoAsmLinker::ConstructJob(Compilation &C, const JobAction &JA,
+                                        const InputInfo &Output,
+                                        const InputInfoList &Inputs,
+                                        const ArgList &Args,
+                                        const char *LinkingOutput) const {
+  //const ToolChain &TC = getToolChain();
+  //assert(getToolChain().getTriple().isAMDGCN() && "Unsupported target");
+
+  std::string GPUArch = "yzh";//Args.getLastArgValue(options::OPT_march_EQ).str();
+  // Prefix for temporary file name.
+  std::string Prefix;
+  for (const auto &II : Inputs)
+    if (II.isFilename())
+      Prefix = llvm::sys::path::stem(II.getFilename()).str() + "-" + GPUArch;
+  assert(Prefix.length() && "no linker inputs are files ");
+
+  // Each command outputs different files.
+  const char *LLVMLinkCommand = constructLLVMLinkCommand(
+      C, JA, Inputs, Args, GPUArch, Prefix);
+
+  // Produce readable assembly if save-temps is enabled.
+  if (C.getDriver().isSaveTempsEnabled())
+    constructLlcCommand(C, JA, Inputs, Args, GPUArch, Prefix, LLVMLinkCommand,
+                        /*OutputIsAsm=*/true);
+  const char *LlcCommand = constructLlcCommand(C, JA, Inputs, Args, GPUArch,
+                                               Prefix, LLVMLinkCommand);
+  constructLldCommand(C, JA, Inputs, Output, Args, LlcCommand);
+}
+
 // Simplified from Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple.
 static bool findGccVersion(StringRef LibDir, std::string &GccLibDir,
                            std::string &Ver) {
@@ -464,6 +905,9 @@ Tool *toolchains::MinGW::buildAssembler() const {
 }
 
 Tool *toolchains::MinGW::buildLinker() const {
+  if (getDriver().getLTOMode() == LTOK_Full) {
+    return new tools::MinGW::LtoAsmLinker(*this);
+  }
   return new tools::MinGW::Linker(*this);
 }
 

@@ -1,6 +1,7 @@
 include "llvm/Option/OptParser.td"
 
 class FF<string name> : Flag<["--"], name>;
+class JJ<string name>: Joined<["--"], name>;
 
 class F<string name>: Flag<["--", "-"], name>;
 class J<string name>: Joined<["--", "-"], name>;
@@ -170,3 +171,12 @@ def lto_emit_asm: FF<"lto-emit-asm">,
   HelpText<"Emit assembly code">;
 def plugin_opt_emit_asm: F<"plugin-opt=emit-asm">,
   Alias<lto_emit_asm>, HelpText<"Alias for --lto-emit-asm">;
+
+def thinlto_index_only: FF<"thinlto-index-only">;
+def thinlto_index_only_eq: JJ<"thinlto-index-only=">;
+def: F<"plugin-opt=thinlto-index-only">,
+  Alias<thinlto_index_only>,
+  HelpText<"Alias for --thinlto-index-only">;
+def: J<"plugin-opt=thinlto-index-only=">,
+  Alias<thinlto_index_only_eq>,
+  HelpText<"Alias for --thinlto-index-only=">;
