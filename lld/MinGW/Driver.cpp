@@ -172,7 +172,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, llvm::raw_ostream &stdoutOS,
   }
 
   if (args.hasArg(OPT_lto_emit_asm)) {
-    warn("mingw::link: \n");
+    //warn("mingw::link: \n");
   }
 
   // A note about "compatible with GNU linkers" message: this is a hack for
@@ -453,7 +453,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, llvm::raw_ostream &stdoutOS,
   std::vector<const char *> vec;
   for (const std::string &s : linkArgs) {
     vec.push_back(s.c_str());
-    warn("Pass to coff::link: " + s);
+    //warn("Pass to coff::link: " + s);
   }
   // Pass the actual binary name, to make error messages be printed with
   // the right prefix.

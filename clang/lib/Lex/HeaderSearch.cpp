@@ -401,11 +401,11 @@ Optional<FileEntryRef> HeaderSearch::getFileAndSuggestModule(
     if (EC != llvm::errc::no_such_file_or_directory &&
         EC != llvm::errc::invalid_argument &&
         EC != llvm::errc::is_a_directory && EC != llvm::errc::not_a_directory) {
-      llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
-                 << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n";
+      //https://reviews.llvm.org/D65956 clang: Diag running out of file handles while looking for files
+      //llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
+      //           << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n";
       //Diags.Report(IncludeLoc, diag::err_cannot_open_file)
       //    << FileName << EC.message();
-
     }
     return None;
   }
