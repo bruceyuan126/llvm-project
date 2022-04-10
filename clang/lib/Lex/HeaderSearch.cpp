@@ -402,11 +402,14 @@ Optional<FileEntryRef> HeaderSearch::getFileAndSuggestModule(
         EC != llvm::errc::invalid_argument &&
         EC != llvm::errc::is_a_directory && EC != llvm::errc::not_a_directory) {
       //https://reviews.llvm.org/D65956 clang: Diag running out of file handles while looking for files
-      //llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
-      //           << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n";
-      //Diags.Report(IncludeLoc, diag::err_cannot_open_file)
-      //    << FileName << EC.message();
+      llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
+                 << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n";
+      Diags.Report(IncludeLoc, diag::err_cannot_open_file)
+          << FileName << EC.message();
     }
+    //llvm::errs() << "\n*** getFileAndSuggestModule faile: \n"
+    //        << FileName << EC.message() << EC.value() << int(std::errc::no_such_file_or_directory) <<" \n"
+    //        << " " << int(llvm::errc::no_such_file_or_directory) << " \n";
     return None;
   }
 
